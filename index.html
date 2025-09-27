@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Employee Time Tracker (MVP)</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Noto Sans',Ubuntu,'Helvetica Neue',Arial;margin:0;padding:20px;background:#f6f7fb}
+    .card{background:#fff;padding:18px;border-radius:10px;box-shadow:0 6px 18px rgba(20,20,50,0.06);max-width:820px;margin:12px auto}
+    input,button,select{padding:8px 10px;border-radius:6px;border:1px solid #d7dbe8;font-size:14px}
+    header{display:flex;gap:12px;align-items:center;justify-content:space-between}
+    .row{display:flex;gap:8px;align-items:center}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:8px;border-bottom:1px solid #eee;text-align:left}
+    .muted{color:#666;font-size:13px}
+    .big{font-size:18px;font-weight:600}
+    .danger{background:#ffefef;border-color:#ffc9c9}
+    .success{background:#effbf1;border-color:#c9f0d6}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <header>
+      <div>
+        <div class="big">Simple Employee Time Tracker (MVP)</div>
+        <div class="muted">Local demo — data stored in browser. Not tamper-proof. For big companies use a backend + secure auth.</div>
+      </div>
+      <div class="row">
+        <label class="muted">Employee ID</label>
+        <input id="empId" placeholder="e.g. E123" />
+      </div>
+    </header>
+
+    <section style="margin-top:14px">
+      <div class="row">
+        <button id="clockIn">Clock In</button>
+        <button id="startBreak">Start Break</button>
+        <button id="endBreak">End Break</button>
+        <button id="clockOut">Clock Out</button>
+        <button id="export">Export CSV</button>
+      </div>
+
+      <div style="margin-top:12px">
+        <label class="muted">Monthly salary for full 8-hour day (₹)</label>
+        <input id="salary" placeholder="Enter salary for 8 hours (example: 20000)" />
+        <button id="calcPay">Calculate Pay for Selected Record</button>
+      </div>
+
+      <table id="records">
+        <thead>
+          <tr><th>Emp</th><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Work (hrs)</th><th>Break (hrs)</th><th>Pay (₹)</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+
+      <div class="muted" style="margin-top:10px">Tip: Select an employee ID and click Clock In / Clock Out. You can add breaks. Use Export CSV to save records.</div>
+    </section>
+  </div>
+
+<script>
+// Simple local MVP
+const getNowISO = ()=> new Date().toISOString();
+const empInput = document.getElementById('empId');
+const salaryInput = document.getElementById('salary');
+const tbody = document.querySelector('#records tbody');
+
+function loadRecords(){
+  return JSON.parse(localStorage.getItem('timeRecords')||'[]');
+}
+function saveRecords(arr){ localStorage.setItem('timeRecords', JSON.stringify(arr)); }
+
+function render(){
+  const rows = loadRecords();
+  tbody.innerHTML='';
+  rows.forEach((r,i)=>{
+    const tr=document.createElement('tr');
+    const workHours = calcWorkHours(r);
+    const breakHours = (r.breakMinutes||0)/60;
+    const pay = calcPayFromSalary(salaryInput.value, workHours);
+    tr.innerHTML = `<td>${r.emp}</td><td>${r.date}</td><td>${r.in || ''}</td><td>${r.out || ''}</td><td>${formatNum(workHours)}</td><td>${formatNum(breakHours)}</td><td>${pay||''}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function formatNum(n){ return Number.isFinite(n)?n.toFixed(2):''; }
+
+function todayDate(){ const d=new Date(); return d.toISOString().slice(0,10); }
+
+function findOpenRecord(emp){
+  const rows = loadRecords();
+  return rows.find(r=> r.emp===emp && r.out==null);
+}
+
+function calcWorkHours(rec){
+  if(!rec || !rec.in) return 0;
+  const inT = new Date(rec.in);
+  const outT = rec.out? new Date(rec.out) : new Date();
+  const totalMin = (outT - inT)/60000;
+  const breakMin = rec.breakMinutes||0;
+  return Math.max(0,(totalMin - breakMin)/60);
+}
+
+function calcPayFromSalary(salaryStr, workedHours){
+  const salary = Number(salaryStr);
+  if(!salary || !workedHours) return '';
+  // Salary is for 8 hours baseline
+  const perHour = salary/8; // precise division
+  const pay = perHour * workedHours;
+  return (Math.round(pay*100)/100).toFixed(2);
+}
+
+function formatTimeISO(iso){ if(!iso) return ''; return new Date(iso).toLocaleString(); }
+
+// Buttons
+document.getElementById('clockIn').addEventListener('click', ()=>{
+  const emp = empInput.value.trim(); if(!emp){ alert('Employee ID dalen'); return; }
+  const open = findOpenRecord(emp); if(open){ alert('Pehle existing open session ko clock out karo'); return; }
+  const records = loadRecords();
+  records.push({emp, date: todayDate(), in: getNowISO(), breakMinutes:0});
+  saveRecords(records); render();
+});
+
+let breakStart = null;
+
+document.getElementById('startBreak').addEventListener('click', ()=>{
+  const emp = empInput.value.trim(); if(!emp){ alert('Employee ID dalen'); return; }
+  const rec = findOpenRecord(emp); if(!rec){ alert('Koi open session nahi hai'); return; }
+  if(rec._onBreak){ alert('Already on break'); return; }
+  rec._onBreak = true; rec._breakStart = getNowISO(); saveRecords(loadRecords()); render();
+});
+
+document.getElementById('endBreak').addEventListener('click', ()=>{
+  const emp = empInput.value.trim(); if(!emp){ alert('Employee ID dalen'); return; }
+  const rec = findOpenRecord(emp); if(!rec || !rec._onBreak){ alert('No break running'); return; }
+  const start = new Date(rec._breakStart);
+  const end = new Date(getNowISO());
+  const minutes = Math.round((end-start)/60000);
+  rec.breakMinutes = (rec.breakMinutes||0) + minutes;
+  delete rec._onBreak; delete rec._breakStart;
+  saveRecords(loadRecords()); render();
+});
+
+document.getElementById('clockOut').addEventListener('click', ()=>{
+  const emp = empInput.value.trim(); if(!emp){ alert('Employee ID dalen'); return; }
+  const rec = findOpenRecord(emp); if(!rec){ alert('No open session'); return; }
+  if(rec._onBreak){ // end break automatically
+    const start = new Date(rec._breakStart);
+    const end = new Date(getNowISO());
+    const minutes = Math.round((end-start)/60000);
+    rec.breakMinutes = (rec.breakMinutes||0) + minutes;
+    delete rec._onBreak; delete rec._breakStart;
+  }
+  rec.out = getNowISO();
+  saveRecords(loadRecords()); render();
+});
+
+// Calculate pay for last record of given employee
+document.getElementById('calcPay').addEventListener('click', ()=>{
+  const emp = empInput.value.trim(); if(!emp){ alert('Employee ID dalen'); return; }
+  const rows = loadRecords().filter(r=> r.emp===emp);
+  if(rows.length===0){ alert('No records for this employee'); return; }
+  const last = rows[rows.length-1];
+  const worked = calcWorkHours(last);
+  const pay = calcPayFromSalary(salaryInput.value, worked);
+  alert(`Worked: ${worked.toFixed(2)} hrs\nPay (based on salary ${salaryInput.value} for 8 hrs): ₹ ${pay}`);
+  render();
+});
+
+// Export CSV
+document.getElementById('export').addEventListener('click', ()=>{
+  const rows = loadRecords();
+  let csv = 'emp,date,in,out,work_hours,break_minutes\n';
+  rows.forEach(r=>{
+    csv += `${r.emp},${r.date},${r.in||''},${r.out||''},${calcWorkHours(r)},${r.breakMinutes||0}\n`;
+  });
+  const blob = new Blob([csv],{type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'time-records.csv'; a.click(); URL.revokeObjectURL(url);
+});
+
+// init
+render();
+
+</script>
+</body>
+</html>
